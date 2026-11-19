@@ -191,6 +191,18 @@
             border-color: var(--accent-hover);
         }
 
+        .btn-danger {
+            background: var(--bad-bg);
+            color: var(--bad);
+            border-color: rgba(185, 28, 28, 0.3);
+            padding: 6px 10px;
+            font-size: 0.78rem;
+        }
+
+        .btn-danger:hover {
+            border-color: var(--bad);
+        }
+
         .btn-theme {
             display: inline-flex;
             align-items: center;
@@ -292,6 +304,13 @@
             border-left-color: var(--ok);
         }
 
+        .member-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
         .task-list {
             display: flex;
             flex-direction: column;
@@ -338,7 +357,6 @@
     <div class="card brand-banner top">
         <div class="brand-row">
             <div class="brand-emblem" aria-hidden="true">
-                <!-- Logo SVG ROYAL DESIGN: la bàn hàng hải + đường mũi tàu tối giản -->
                 <svg width="26" height="26" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <circle cx="14" cy="14" r="10.5" stroke="currentColor" stroke-width="1.6"/>
                     <circle cx="14" cy="14" r="2.2" fill="currentColor"/>
@@ -398,6 +416,7 @@
             </div>
             <div class="progress-track"><div class="progress-fill" id="overallBar"></div></div>
             <div class="member-grid" id="memberGrid"></div>
+            <div class="msg" id="memberMsg"></div>
         </div>
 
         <div class="card hidden" id="adminCreateCard">
@@ -453,6 +472,7 @@
 
     function setMsg(id, text, type = '') {
         const el = document.getElementById(id);
+        if (!el) return;
         el.textContent = text;
         el.className = 'msg' + (type ? ` ${type}` : '');
     }
@@ -652,6 +672,45 @@
         await refreshAll();
     });
 
+    async function deleteMember(memberId, memberName) {
+        if ((currentProfile?.role || '').toLowerCase() !== 'admin') return;
+        if (!memberId) return;
+
+        if (memberId === currentUser?.id) {
+            setMsg('memberMsg', 'Không thể tự xóa tài khoản Admin đang đăng nhập.', 'err');
+            return;
+        }
+
+        const ok = confirm(`Xóa thành viên "${memberName}" khỏi danh sách nhóm (và xóa các công việc đang giao cho thành viên này)?`);
+        if (!ok) return;
+
+        setMsg('memberMsg', 'Đang xóa thành viên...');
+
+        // Xóa các task gắn với thành viên trước (nếu bảng có khóa ngoại ràng buộc)
+        const { error: taskDelErr } = await sb
+            .from('team_tasks')
+            .delete()
+            .eq('assignee_id', memberId);
+
+        if (taskDelErr) {
+            setMsg('memberMsg', 'Lỗi xóa công việc của thành viên: ' + taskDelErr.message, 'err');
+            return;
+        }
+
+        const { error: profDelErr } = await sb
+            .from('profiles')
+            .delete()
+            .eq('id', memberId);
+
+        if (profDelErr) {
+            setMsg('memberMsg', 'Lỗi xóa thành viên (kiểm tra RLS policy DELETE trên profiles): ' + profDelErr.message, 'err');
+            return;
+        }
+
+        setMsg('memberMsg', `Đã xóa thành viên "${memberName}" khỏi danh sách nhóm.`, 'ok');
+        await refreshAll();
+    }
+
     async function updateStatus(taskId, newStatus) {
         const { error } = await sb
             .from('team_tasks')
@@ -698,9 +757,15 @@
             const mine = tasks.filter(t => t.assignee_id === p.id);
             const mineDone = mine.filter(t => t.status === 'done').length;
             const mineDoing = mine.filter(t => t.status === 'doing').length;
+            const canDeleteMember = isAdmin && p.id !== currentUser?.id;
+            const safeName = (p.full_name || p.email || 'Thành viên').replace(/'/g, "\\'");
+
             return `
                 <div class="member-box ${isOnline ? 'is-online' : ''}">
-                    <div style="font-weight:700;">${p.full_name}</div>
+                    <div class="member-head">
+                        <div style="font-weight:700;">${p.full_name}</div>
+                        ${canDeleteMember ? `<button type="button" class="btn-danger" onclick="deleteMember('${p.id}', '${safeName}')">Xóa</button>` : ''}
+                    </div>
                     <div class="muted">${p.email} · <span class="badge">${p.role}</span></div>
                     <div class="presence-status ${isOnline ? 'presence-online' : 'presence-offline'}">
                         <span class="${isOnline ? 'dot-live' : 'dot-off'}"></span>
